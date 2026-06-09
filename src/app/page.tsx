@@ -152,6 +152,7 @@ export default function Page() {
           autoPlay
           playsInline
           muted
+          aria-label="QRコードスキャン用のカメラ映像"
           className="aspect-video w-full bg-black object-cover"
         />
       </section>
