@@ -93,8 +93,20 @@ export default function Page() {
                 current === value ? current : value,
               );
             }
-          } catch {
-            // QR未検出時は無視
+          } catch (error) {
+            console.error(error);
+            setStatus("error");
+
+            if (error instanceof Error) {
+              setErrorMessage(error.message);
+            } else {
+              setErrorMessage("QRコードの読取中にエラーが発生しました");
+            }
+
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = undefined;
+            }
           }
         }, 300);
       } catch (error) {
