@@ -4,53 +4,71 @@ import { useEffect, useRef, useState } from "react";
 import { readBarcodes } from "zxing-wasm/reader";
 
 export default function Page() {
+  // カメラ映像を表示する <video> 要素への参照
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 映像フレームをキャプチャするための非表示 <canvas> 要素への参照
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // スキャナーの状態管理
+  // "initializing": カメラ起動前、"running": スキャン中、"error": エラー発生時
   const [status, setStatus] = useState<
     "initializing" | "running" | "error"
   >("initializing");
 
+  // QRコードの読取結果テキスト
   const [result, setResult] = useState("");
+  // エラー時に表示するメッセージ
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
+    // カメラストリームを保持する変数（クリーンアップ時に停止するために使用）
     let stream: MediaStream | null = null;
+    // 定期スキャンのインターバルIDを保持する変数
     let intervalId: ReturnType<typeof setInterval> | undefined;
 
     const startScanner = async () => {
       try {
+        // User-Agent からモバイルデバイスかどうかを判定する
         const isMobile =
           /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+        // カメラへのアクセスを要求する
+        // モバイルの場合はアウトカメラ（environment）を優先、PC の場合はデフォルトカメラを使用
         stream = await navigator.mediaDevices.getUserMedia(
           isMobile
             ? {
                 video: {
                   facingMode: {
-                    ideal: "environment",
+                    ideal: "environment", // アウトカメラ（背面カメラ）を優先
                   },
                 },
               }
             : {
-                video: true,
+                video: true, // PC ではデフォルトカメラを使用
               },
         );
 
+        // videoRef がマウント前に unmount されていた場合は処理を中断する
         if (!videoRef.current) return;
 
+        // 取得したカメラストリームを <video> 要素にセットして再生する
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
 
+        // カメラの起動完了後、状態を "running"（スキャン中）に更新する
         setStatus("running");
 
+        // 300ms ごとにカメラ映像を解析して QR コードを検出するインターバルを開始する
         intervalId = setInterval(async () => {
           try {
             const video = videoRef.current;
             const canvas = canvasRef.current;
 
+            // video または canvas が取得できない場合はスキップする
             if (!video || !canvas) return;
 
+            // 映像データがまだ準備できていない場合はスキップする
+            // HAVE_CURRENT_DATA (2) 以上であれば現在フレームのデータが利用可能
             if (
               video.readyState <
               HTMLMediaElement.HAVE_CURRENT_DATA
@@ -58,13 +76,16 @@ export default function Page() {
               return;
             }
 
+            // canvas の 2D 描画コンテキストを取得する
             const context = canvas.getContext("2d");
 
             if (!context) return;
 
+            // canvas のサイズを映像の実解像度に合わせる（歪み防止のため）
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
 
+            // 現在の映像フレームを canvas に描画する
             context.drawImage(
               video,
               0,
@@ -73,6 +94,8 @@ export default function Page() {
               canvas.height,
             );
 
+            // canvas から RGBA ピクセルデータ（ImageData）を取得する
+            // このデータを zxing-wasm に渡して QR コードを解析する
             const imageData = context.getImageData(
               0,
               0,
@@ -80,12 +103,16 @@ export default function Page() {
               canvas.height,
             );
 
+            // zxing-wasm の readBarcodes でQRコードを解析する
+            // formats: QRCode のみ対象、maxNumberOfSymbols: 最大1件取得、tryHarder: 精度優先モード
             const results = await readBarcodes(imageData, {
               formats: ["QRCode"],
               maxNumberOfSymbols: 1,
               tryHarder: true,
             });
 
+            // QRコードが検出された場合、最初の結果のテキストを state にセットする
+            // 同じ値の場合は state 更新をスキップして無駄な再レンダーを防ぐ
             if (results.length > 0) {
               const value = results[0].text;
 
@@ -94,6 +121,7 @@ export default function Page() {
               );
             }
           } catch (error) {
+            // スキャン中にエラーが発生した場合の処理
             console.error(error);
             setStatus("error");
 
@@ -103,6 +131,7 @@ export default function Page() {
               setErrorMessage("QRコードの読取中にエラーが発生しました");
             }
 
+            // エラー発生後はインターバルを停止して無駄な処理を防ぐ
             if (intervalId) {
               clearInterval(intervalId);
               intervalId = undefined;
@@ -110,6 +139,7 @@ export default function Page() {
           }
         }, 300);
       } catch (error) {
+        // カメラへのアクセス許可拒否やデバイス未検出など、起動時エラーの処理
         console.error(error);
 
         setStatus("error");
@@ -122,18 +152,23 @@ export default function Page() {
       }
     };
 
+    // スキャナーを起動する
     startScanner();
 
+    // コンポーネントのアンマウント時（ページ離脱時）にリソースを解放するクリーンアップ関数
     return () => {
+      // インターバルを停止してスキャン処理を終了する
       if (intervalId) {
         clearInterval(intervalId);
       }
 
+      // カメラストリームのすべてのトラック（映像・音声）を停止する
+      // これを行わないとカメラインジケーターが点灯したままになる
       stream?.getTracks().forEach((track) => {
         track.stop();
       });
     };
-  }, []);
+  }, []); // マウント時に一度だけ実行する
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 p-6">
@@ -146,6 +181,7 @@ export default function Page() {
         </p>
       </header>
 
+      {/* カメラ映像の表示エリア */}
       <section className="overflow-hidden rounded-xl border border-gray-200 shadow-sm">
         <video
           ref={videoRef}
@@ -157,11 +193,13 @@ export default function Page() {
         />
       </section>
 
+      {/* QRコード解析用の非表示 canvas（映像フレームのキャプチャに使用） */}
       <canvas
         ref={canvasRef}
         className="hidden"
       />
 
+      {/* スキャナーの現在の状態を表示するセクション */}
       <section className="rounded-xl border border-gray-200 p-4">
         <h2 className="mb-2 font-semibold">状態</h2>
 
@@ -171,6 +209,7 @@ export default function Page() {
           {status === "error" && "エラー"}
         </p>
 
+        {/* エラーメッセージがある場合のみ表示する */}
         {errorMessage && (
           <p className="mt-2 text-sm text-red-600">
             {errorMessage}
@@ -178,9 +217,11 @@ export default function Page() {
         )}
       </section>
 
+      {/* QRコードの読取結果を表示するセクション */}
       <section className="rounded-xl border border-gray-200 p-4">
         <h2 className="mb-2 font-semibold">読取結果</h2>
 
+        {/* 結果がない場合は "未検出" を表示する */}
         <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-gray-50 p-3 text-sm">
           {result || "未検出"}
         </pre>
