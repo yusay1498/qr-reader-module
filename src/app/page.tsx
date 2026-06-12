@@ -14,7 +14,11 @@ export default function Page() {
   // "paused": バックグラウンド停止中、"error": エラー発生時
   const [status, setStatus] = useState<
     "initializing" | "running" | "paused" | "error"
-  >("initializing");
+  >(() =>
+    typeof document !== "undefined" && document.hidden
+      ? "paused"
+      : "initializing",
+  );
 
   // バーコードの読取結果（テキストとフォーマット）
   const [result, setResult] = useState<{
@@ -58,7 +62,13 @@ export default function Page() {
         );
 
         // videoRef がマウント前に unmount されていた場合は処理を中断する
-        if (!videoRef.current) return;
+        if (document.hidden || !videoRef.current) {
+          stopScanner();
+          if (document.hidden) {
+            setStatus("paused");
+          }
+          return;
+        }
 
         // 取得したカメラストリームを <video> 要素にセットして再生する
         videoRef.current.srcObject = stream;
@@ -134,22 +144,19 @@ export default function Page() {
           } catch (error) {
             // スキャン中にエラーが発生した場合の処理
             console.error(error);
+            stopScanner();
             setStatus("error");
             setErrorMessage(
               error instanceof Error
                 ? error.message
                 : "バーコードの読取中にエラーが発生しました",
             );
-            // エラー発生後はインターバルを停止して無駄な処理を防ぐ
-            if (intervalId !== undefined) {
-              clearInterval(intervalId);
-              intervalId = undefined;
-            }
           }
         }, 300);
       } catch (error) {
         // カメラへのアクセス許可拒否やデバイス未検出など、起動時エラーの処理
         console.error(error);
+        stopScanner();
         setStatus("error");
         setErrorMessage(
           error instanceof Error
@@ -159,8 +166,10 @@ export default function Page() {
       }
     };
 
-    // スキャナーを起動する
-    startScanner();
+    // 初期表示時の可視状態に合わせてスキャナーを制御する
+    if (!document.hidden) {
+      startScanner();
+    }
 
     // Page Visibility API を使用してバックグラウンド時にカメラを停止し省エネを図る
     // タブが非表示になったときはカメラを停止、表示時に再起動する
@@ -169,6 +178,7 @@ export default function Page() {
         stopScanner();
         setStatus("paused");
       } else {
+        stopScanner();
         setStatus("initializing");
         startScanner();
       }
